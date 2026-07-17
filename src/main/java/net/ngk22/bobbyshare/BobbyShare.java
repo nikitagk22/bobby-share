@@ -15,6 +15,9 @@ import net.minecraft.server.world.ServerChunkManager;
 import net.minecraft.server.world.ServerChunkLoadingManager;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.text.Text;
+import net.minecraft.world.ChunkSerializer;
+import net.minecraft.world.chunk.Chunk;
+import net.minecraft.world.chunk.ChunkStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -89,43 +92,62 @@ public class BobbyShare implements ModInitializer {
         ServerPlayNetworking.registerGlobalReceiver(ChunkRequestPayload.ID, (payload, context) -> {
             ServerPlayerEntity player = context.player();
             ChunkPos pos = new ChunkPos(payload.x(), payload.z());
-            ServerWorld world = player.getServerWorld();
+            
+            // Execute on the server main thread to ensure thread safety
+            context.server().execute(() -> {
+                ServerWorld world = player.getServerWorld();
 
-            // 1. Blacklisted Dimensions Check
-            String dimensionId = world.getRegistryKey().getValue().toString();
-            if (BobbyShareConfigManager.getConfig().blacklistedDimensions.contains(dimensionId)) {
-                LOGGER.debug("Chunk request ignored: Dimension {} is blacklisted", dimensionId);
-                return;
-            }
+                // 1. Blacklisted Dimensions Check
+                String dimensionId = world.getRegistryKey().getValue().toString();
+                if (BobbyShareConfigManager.getConfig().blacklistedDimensions.contains(dimensionId)) {
+                    LOGGER.debug("Chunk request ignored: Dimension {} is blacklisted", dimensionId);
+                    return;
+                }
 
-            // 2. Rate Limiting Check
-            TokenBucket bucket = rateLimiters.computeIfAbsent(player.getUuid(), uuid -> new TokenBucket());
-            if (!bucket.tryConsume()) {
-                LOGGER.debug("Player {} rate-limited for chunk request {}", player.getName().getString(), pos);
-                return;
-            }
+                // 2. Rate Limiting Check
+                TokenBucket bucket = rateLimiters.computeIfAbsent(player.getUuid(), uuid -> new TokenBucket());
+                if (!bucket.tryConsume()) {
+                    LOGGER.debug("Player {} rate-limited for chunk request {}", player.getName().getString(), pos);
+                    return;
+                }
 
-            // 3. Security check: Only allow chunks within configured maxRequestDistance
-            double maxDistance = BobbyShareConfigManager.getConfig().maxRequestDistance;
-            double dx = player.getChunkPos().x - pos.x;
-            double dz = player.getChunkPos().z - pos.z;
-            if (dx * dx + dz * dz > maxDistance * maxDistance) {
-                LOGGER.warn("Player {} requested chunk {} too far away! Rejecting request.", player.getName().getString(), pos);
-                return;
-            }
+                // 3. Security check: Only allow chunks within configured maxRequestDistance
+                double maxDistance = BobbyShareConfigManager.getConfig().maxRequestDistance;
+                double dx = player.getChunkPos().x - pos.x;
+                double dz = player.getChunkPos().z - pos.z;
+                if (dx * dx + dz * dz > maxDistance * maxDistance) {
+                    LOGGER.warn("Player {} requested chunk {} too far away! Rejecting request.", player.getName().getString(), pos);
+                    return;
+                }
 
-            // 4. Server LRU Cache Check
-            Optional<NbtCompound> cached = chunkCache.get(pos);
-            if (cached != null) {
-                LOGGER.debug("Served chunk {} to player {} from memory cache", pos, player.getName().getString());
-                ServerPlayNetworking.send(player, new ChunkResponsePayload(pos.x, pos.z, cached));
-                return;
-            }
+                // 4. Server LRU Cache Check
+                Optional<NbtCompound> cached = chunkCache.get(pos);
+                if (cached != null) {
+                    LOGGER.debug("Served chunk {} to player {} from memory cache", pos, player.getName().getString());
+                    ServerPlayNetworking.send(player, new ChunkResponsePayload(pos.x, pos.z, cached));
+                    return;
+                }
 
-            // 5. Cache Miss: Fetch chunk NBT asynchronously from storage
-            var chunkManager = world.getChunkManager();
-            if (chunkManager instanceof ServerChunkManager serverChunkManager) {
-                ServerChunkLoadingManager sclm = serverChunkManager.chunkLoadingManager;
+                // 5. Memory Check: If the chunk is currently active in the server memory, serialize it directly
+                var chunkManager = world.getChunkManager();
+                Chunk chunk = chunkManager.getChunk(pos.x, pos.z, ChunkStatus.FULL, false);
+                if (chunk != null) {
+                    try {
+                        NbtCompound nbt = ChunkSerializer.serialize(world, chunk);
+                        Optional<NbtCompound> optimized = Optional.ofNullable(optimizeChunkNbt(nbt));
+                        if (optimized.isPresent()) {
+                            chunkCache.put(pos, optimized);
+                        }
+                        LOGGER.debug("Served chunk {} to player {} from live server memory", pos, player.getName().getString());
+                        ServerPlayNetworking.send(player, new ChunkResponsePayload(pos.x, pos.z, optimized));
+                        return;
+                    } catch (Exception e) {
+                        LOGGER.error("Failed to serialize live chunk NBT for " + pos, e);
+                    }
+                }
+
+                // 6. Cache Miss & Unloaded: Fetch chunk NBT asynchronously from storage
+                ServerChunkLoadingManager sclm = chunkManager.chunkLoadingManager;
                 LOGGER.debug("Requesting chunk {} for player {} from disk asynchronously", pos, player.getName().getString());
                 sclm.getNbt(pos).thenAccept(opt -> {
                     // Optimize chunk NBT (strip unnecessary tags like structures, ticks, block entities)
@@ -143,10 +165,7 @@ public class BobbyShare implements ModInitializer {
                     ServerPlayNetworking.send(player, new ChunkResponsePayload(pos.x, pos.z, Optional.empty()));
                     return null;
                 });
-            } else {
-                LOGGER.error("chunkManager is not an instance of ServerChunkManager");
-                ServerPlayNetworking.send(player, new ChunkResponsePayload(pos.x, pos.z, Optional.empty()));
-            }
+            });
         });
     }
 
