@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "net.ngk22.bobbyshare.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+  ],
+  "client": [
+    "FakeChunkManagerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
