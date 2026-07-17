@@ -131,8 +131,10 @@ public class BobbyShare implements ModInitializer {
                     // Optimize chunk NBT (strip unnecessary tags like structures, ticks, block entities)
                     Optional<NbtCompound> optimized = opt.map(BobbyShare::optimizeChunkNbt);
                     
-                    // Put in the cache
-                    chunkCache.put(pos, optimized);
+                    // Put in the cache only if the chunk exists/is generated on disk
+                    if (optimized.isPresent()) {
+                        chunkCache.put(pos, optimized);
+                    }
 
                     // Send the chunk NBT back to the player
                     ServerPlayNetworking.send(player, new ChunkResponsePayload(pos.x, pos.z, optimized));
