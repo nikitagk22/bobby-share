@@ -7,3 +7,8 @@ bin/
 *.iws
 *.iml
 .vscode/
+*.log
+logs.txt
+bobby_share_icon.jpg
+.DS_Store
+**/.DS_Store

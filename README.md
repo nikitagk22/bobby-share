@@ -34,16 +34,32 @@ Designed to scale smoothly from 3 players to 100+ concurrent players without cau
 
 ---
 
+## ⚙️ Configuration & Commands (Server-Side)
+
+You can configure Bobby Share's performance settings using the auto-generated config file at `config/bobbyshare.json` on your server:
+
+* `rateLimitBurst` - Maximum chunks a player can request in a quick burst (default: `200`).
+* `rateLimitRefill` - Number of chunk requests restored to a player per second (default: `80`).
+* `cacheCapacity` - Maximum stripped chunks stored in server RAM (default: `4096`).
+* `maxRequestDistance` - Safety limit of how far from the player requested chunks can be (default: `34.0`).
+* `blacklistedDimensions` - List of dimension identifiers to disable chunk streaming for (default: `["minecraft:the_end"]`).
+
+### Admin Commands (Requires OP level 2):
+* `/bobbyshare reload` - Reloads the configuration file from disk and applies changes instantly.
+* `/bobbyshare clearcache` - Clears the server-side RAM chunk cache.
+
+---
+
 ## 📥 Installation
 
 ### Client-Side
 Place the following files in your client's `.minecraft/mods/` directory:
 1. `bobby-5.2.4.1+mc1.21.jar` (or any compatible Bobby mod version)
-2. `bobbyshare-1.0.0.jar`
+2. `bobbyshare-1.1.0.jar`
 
 ### Server-Side
 Place only the addon jar in your server's `mods/` directory:
-1. `bobbyshare-1.0.0.jar`
+1. `bobbyshare-1.1.0.jar`
 
 *(Note: The main Bobby mod is client-side only and should **not** be installed on the server).*
 
@@ -57,7 +73,7 @@ Run the Gradle build command inside the project directory:
 ```bash
 ./gradlew build
 ```
-The compiled jar will be located in `build/libs/bobbyshare-1.0.0.jar`.
+The compiled jar will be located in `build/libs/bobbyshare-1.1.0.jar`.
 
 ---
 
