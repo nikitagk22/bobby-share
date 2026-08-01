@@ -1,6 +1,6 @@
 # Bobby Share
 
-[![Minecraft Version](https://img.shields.io/badge/Minecraft-1.20.5%20--%201.21.4+-blue.svg)](https://link.modrinth.com)
+[![Minecraft Version](https://img.shields.io/badge/Minecraft-26.2-blue.svg)](https://link.modrinth.com)
 [![Platform](https://img.shields.io/badge/Platform-Fabric-red.svg)](https://fabricmc.net)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -52,14 +52,33 @@ You can configure Bobby Share's performance settings using the auto-generated co
 
 ## 📥 Installation
 
+Choose the Bobby Share jar matching the Minecraft and Bobby versions used by the client:
+
+| Minecraft | Bobby | Bobby Share | Java |
+| --- | --- | --- | --- |
+| 1.20.5–1.20.6 | 5.2.0–5.2.1 | `bobbyshare-1.2.0+mc1.20.5-1.20.6.jar` | 21 |
+| 1.21–1.21.1 | 5.2.4.x | `bobbyshare-1.2.0+mc1.21-1.21.1.jar` | 21 |
+| 1.21.2–1.21.3 | 5.2.5.x | `bobbyshare-1.2.0+mc1.21.2-1.21.3.jar` | 21 |
+| 1.21.4 | 5.2.6.x | `bobbyshare-1.2.0+mc1.21.4.jar` | 21 |
+| 1.21.5 | 5.2.7.x | `bobbyshare-1.2.0+mc1.21.5.jar` | 21 |
+| 1.21.6–1.21.8 | 5.2.8–5.2.9 | `bobbyshare-1.2.0+mc1.21.6-1.21.8.jar` | 21 |
+| 1.21.9–1.21.10 | 5.2.10.x | `bobbyshare-1.2.0+mc1.21.9-1.21.10.jar` | 21 |
+| 1.21.11 | 5.2.11.x | `bobbyshare-1.2.0+mc1.21.11.jar` | 21 |
+| 26.1–26.1.2 | 5.2.13.x | `bobbyshare-1.2.0+mc26.1-26.1.2.jar` | 25 |
+| 26.2 | 5.2.15.x | `bobbyshare-1.2.0+mc26.2.jar` | 25 |
+
+The ready-to-use jars are located in the `releases` directory. One jar is shared by
+multiple Minecraft versions only where the relevant Minecraft, Fabric networking,
+chunk serialization, and Bobby integration APIs remain compatible.
+
 ### Client-Side
 Place the following files in your client's `.minecraft/mods/` directory:
-1. `bobby-5.2.4.1+mc1.21.jar` (or any compatible Bobby mod version)
-2. `bobbyshare-1.1.0.jar`
+1. `bobby-5.2.15+mc26.2.jar`
+2. `bobbyshare-1.2.0+mc26.2.jar`
 
 ### Server-Side
 Place only the addon jar in your server's `mods/` directory:
-1. `bobbyshare-1.1.0.jar`
+1. `bobbyshare-1.2.0+mc26.2.jar`
 
 *(Note: The main Bobby mod is client-side only and should **not** be installed on the server).*
 
@@ -67,13 +86,13 @@ Place only the addon jar in your server's `mods/` directory:
 
 ## 🛠️ Building
 
-To build the mod from source, you need **Java 21** installed.
+To build the mod from source, you need **Java 25** installed.
 
 Run the Gradle build command inside the project directory:
 ```bash
 ./gradlew build
 ```
-The compiled jar will be located in `build/libs/bobbyshare-1.1.0.jar`.
+The compiled jar will be located in `build/libs/bobbyshare-1.2.0+mc26.2.jar`.
 
 ---
 

@@ -1,25 +1,25 @@
 package net.ngk22.bobbyshare.network;
 
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.network.RegistryByteBuf;
-import net.minecraft.network.codec.PacketCodec;
-import net.minecraft.network.codec.PacketCodecs;
-import net.minecraft.network.packet.CustomPayload;
-import net.minecraft.util.Identifier;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.Identifier;
 
 import java.util.Optional;
 
-public record ChunkResponsePayload(int x, int z, Optional<NbtCompound> nbt) implements CustomPayload {
-    public static final Id<ChunkResponsePayload> ID = new Id<>(Identifier.of("bobbyshare", "chunk_response"));
-    public static final PacketCodec<RegistryByteBuf, ChunkResponsePayload> CODEC = PacketCodec.tuple(
-        PacketCodecs.INTEGER, ChunkResponsePayload::x,
-        PacketCodecs.INTEGER, ChunkResponsePayload::z,
-        PacketCodecs.optional(PacketCodecs.UNLIMITED_NBT_COMPOUND), ChunkResponsePayload::nbt,
+public record ChunkResponsePayload(int x, int z, Optional<CompoundTag> nbt) implements CustomPacketPayload {
+    public static final Type<ChunkResponsePayload> ID = new Type<>(Identifier.fromNamespaceAndPath("bobbyshare", "chunk_response"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, ChunkResponsePayload> CODEC = StreamCodec.composite(
+        ByteBufCodecs.INT, ChunkResponsePayload::x,
+        ByteBufCodecs.INT, ChunkResponsePayload::z,
+        ByteBufCodecs.OPTIONAL_COMPOUND_TAG, ChunkResponsePayload::nbt,
         ChunkResponsePayload::new
     );
 
     @Override
-    public Id<? extends CustomPayload> getId() {
+    public Type<? extends CustomPacketPayload> type() {
         return ID;
     }
 }

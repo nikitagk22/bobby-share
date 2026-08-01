@@ -1,7 +1,7 @@
 {
   "required": true,
   "package": "net.ngk22.bobbyshare.mixin",
-  "compatibilityLevel": "JAVA_21",
+  "compatibilityLevel": "JAVA_25",
   "mixins": [
   ],
   "client": [

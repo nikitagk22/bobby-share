@@ -3,11 +3,11 @@ package net.ngk22.bobbyshare.client;
 import net.ngk22.bobbyshare.BobbyShare;
 import net.ngk22.bobbyshare.network.ChunkRequestPayload;
 import net.ngk22.bobbyshare.network.ChunkResponsePayload;
-import de.johni0702.minecraft.bobby.ext.ClientChunkManagerExt;
+import de.johni0702.minecraft.bobby.ext.ClientChunkCacheExt;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.util.math.ChunkPos;
+import net.minecraft.client.Minecraft;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.level.ChunkPos;
 
 import java.util.Map;
 import java.util.Queue;
@@ -15,7 +15,7 @@ import java.util.Optional;
 import java.util.concurrent.*;
 
 public class ClientChunkRequester {
-    private static final Map<ChunkPos, CompletableFuture<Optional<NbtCompound>>> pendingRequests = new ConcurrentHashMap<>();
+    private static final Map<ChunkPos, CompletableFuture<Optional<CompoundTag>>> pendingRequests = new ConcurrentHashMap<>();
     private static final Queue<ChunkPos> requestQueue = new ConcurrentLinkedQueue<>();
 
     private static final ScheduledExecutorService TIMEOUT_SCHEDULER = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -29,9 +29,9 @@ public class ClientChunkRequester {
         TIMEOUT_SCHEDULER.scheduleAtFixedRate(ClientChunkRequester::processQueue, 0, 50, TimeUnit.MILLISECONDS);
     }
 
-    public static CompletableFuture<Optional<NbtCompound>> requestChunk(ChunkPos pos) {
-        CompletableFuture<Optional<NbtCompound>> future = new CompletableFuture<>();
-        CompletableFuture<Optional<NbtCompound>> existing = pendingRequests.putIfAbsent(pos, future);
+    public static CompletableFuture<Optional<CompoundTag>> requestChunk(ChunkPos pos) {
+        CompletableFuture<Optional<CompoundTag>> future = new CompletableFuture<>();
+        CompletableFuture<Optional<CompoundTag>> existing = pendingRequests.putIfAbsent(pos, future);
         if (existing != null) {
             return existing;
         }
@@ -60,14 +60,14 @@ public class ClientChunkRequester {
                     break;
                 }
 
-                CompletableFuture<Optional<NbtCompound>> future = pendingRequests.get(pos);
+                CompletableFuture<Optional<CompoundTag>> future = pendingRequests.get(pos);
                 if (future != null && !future.isDone()) {
-                    ClientPlayNetworking.send(new ChunkRequestPayload(pos.x, pos.z));
+                    ClientPlayNetworking.send(new ChunkRequestPayload(pos.x(), pos.z()));
                     sentThisTick++;
 
                     // Schedule a 5-second timeout check
                     TIMEOUT_SCHEDULER.schedule(() -> {
-                        CompletableFuture<Optional<NbtCompound>> pending = pendingRequests.remove(pos);
+                        CompletableFuture<Optional<CompoundTag>> pending = pendingRequests.remove(pos);
                         if (pending != null && !pending.isDone()) {
                             BobbyShare.LOGGER.debug("Request for chunk {} timed out", pos);
                             pending.complete(Optional.empty());
@@ -84,7 +84,7 @@ public class ClientChunkRequester {
         ChunkPos pos = new ChunkPos(payload.x(), payload.z());
         
         // Complete the future if it is still registered in the pending queue
-        CompletableFuture<Optional<NbtCompound>> future = pendingRequests.remove(pos);
+        CompletableFuture<Optional<CompoundTag>> future = pendingRequests.remove(pos);
         if (future != null) {
             future.complete(payload.nbt());
         }
@@ -93,10 +93,10 @@ public class ClientChunkRequester {
         // even if the response arrived late (after client-side timeout).
         payload.nbt().ifPresent(nbt -> {
             try {
-                MinecraftClient client = MinecraftClient.getInstance();
-                if (client.world != null) {
-                    var chunkManager = client.world.getChunkManager();
-                    if (chunkManager instanceof ClientChunkManagerExt ext) {
+                Minecraft client = Minecraft.getInstance();
+                if (client.level != null) {
+                    var chunkManager = client.level.getChunkSource();
+                    if (chunkManager instanceof ClientChunkCacheExt ext) {
                         var fakeChunkManager = ext.bobby_getFakeChunkManager();
                         if (fakeChunkManager != null) {
                             var storage = fakeChunkManager.getStorage();

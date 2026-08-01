@@ -2,8 +2,8 @@ package net.ngk22.bobbyshare.mixin;
 
 import net.ngk22.bobbyshare.client.ClientChunkRequester;
 import de.johni0702.minecraft.bobby.FakeChunkManager;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.util.math.ChunkPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.level.ChunkPos;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -14,14 +14,14 @@ import java.util.concurrent.CompletableFuture;
 
 @Mixin(value = FakeChunkManager.class)
 public class FakeChunkManagerMixin {
-    @Inject(method = "loadTag(Lnet/minecraft/util/math/ChunkPos;I)Ljava/util/concurrent/CompletableFuture;", at = @At("RETURN"), cancellable = true, remap = true)
-    private void onLoadTag(ChunkPos pos, int index, CallbackInfoReturnable<CompletableFuture<Optional<NbtCompound>>> cir) {
+    @Inject(method = "loadTag(Lnet/minecraft/world/level/ChunkPos;I)Ljava/util/concurrent/CompletableFuture;", at = @At("RETURN"), cancellable = true, remap = false)
+    private void onLoadTag(ChunkPos pos, int index, CallbackInfoReturnable<CompletableFuture<Optional<CompoundTag>>> cir) {
         if (index != 0) {
             return;
         }
 
-        CompletableFuture<Optional<NbtCompound>> localFuture = cir.getReturnValue();
-        CompletableFuture<Optional<NbtCompound>> netFuture = localFuture.thenCompose(opt -> {
+        CompletableFuture<Optional<CompoundTag>> localFuture = cir.getReturnValue();
+        CompletableFuture<Optional<CompoundTag>> netFuture = localFuture.thenCompose(opt -> {
             if (opt.isPresent()) {
                 return CompletableFuture.completedFuture(opt);
             } else {

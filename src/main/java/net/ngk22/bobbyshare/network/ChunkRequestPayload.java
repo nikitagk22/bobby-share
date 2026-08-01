@@ -1,21 +1,21 @@
 package net.ngk22.bobbyshare.network;
 
-import net.minecraft.network.RegistryByteBuf;
-import net.minecraft.network.codec.PacketCodec;
-import net.minecraft.network.codec.PacketCodecs;
-import net.minecraft.network.packet.CustomPayload;
-import net.minecraft.util.Identifier;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.Identifier;
 
-public record ChunkRequestPayload(int x, int z) implements CustomPayload {
-    public static final Id<ChunkRequestPayload> ID = new Id<>(Identifier.of("bobbyshare", "chunk_request"));
-    public static final PacketCodec<RegistryByteBuf, ChunkRequestPayload> CODEC = PacketCodec.tuple(
-        PacketCodecs.INTEGER, ChunkRequestPayload::x,
-        PacketCodecs.INTEGER, ChunkRequestPayload::z,
+public record ChunkRequestPayload(int x, int z) implements CustomPacketPayload {
+    public static final Type<ChunkRequestPayload> ID = new Type<>(Identifier.fromNamespaceAndPath("bobbyshare", "chunk_request"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, ChunkRequestPayload> CODEC = StreamCodec.composite(
+        ByteBufCodecs.INT, ChunkRequestPayload::x,
+        ByteBufCodecs.INT, ChunkRequestPayload::z,
         ChunkRequestPayload::new
     );
 
     @Override
-    public Id<? extends CustomPayload> getId() {
+    public Type<? extends CustomPacketPayload> type() {
         return ID;
     }
 }

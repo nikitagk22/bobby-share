@@ -24,11 +24,11 @@
     "bobbyshare.mixins.json"
   ],
   "depends": {
-    "fabricloader": ">=0.16.2",
-    "minecraft": ">=1.20.5",
+    "fabricloader": ">=0.19.3",
+    "minecraft": "~26.2",
     "fabric-api": "*"
   },
-  "suggests": {
-    "bobby": ">=5.2"
+  "recommends": {
+    "bobby": "~5.2.15"
   }
 }

@@ -1,4 +1,9 @@
-bobby-5.2.4.1+mc1.21.jar
+bobby-*.jar
+.gradle-user/
+run/
+releases/*
+!releases/*.jar
+releases/*-sources.jar
 .gradle/
 build/
 out/
