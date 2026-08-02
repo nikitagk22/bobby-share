@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "bobbyshare",
+  "name": "Bobby Share",
+  "version": "${version}",
+  "description": "Collaboratively streams chunks from server to client to fill Bobby's rendering cache.",
+  "authors": ["ngk22"],
+  "contact": { "homepage": "https://github.com/nikitagk22/bobby-share" },
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["net.ngk22.bobbyshare.BobbyShare"],
+    "client": ["net.ngk22.bobbyshare.client.BobbyShareClient"]
+  },
+  "mixins": ["bobbyshare.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.14.17",
+    "minecraft": "~1.21.1",
+    "fabric-api": "*"
+  },
+  "recommends": { "bobby": "~5.2.4.1" }
+}
