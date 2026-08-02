@@ -1,9 +1,0 @@
-pluginManagement {
-    repositories {
-        maven { url = 'https://maven.fabricmc.net/' }
-        gradlePluginPortal()
-        mavenCentral()
-    }
-}
-
-rootProject.name = 'bobby-share-legacy-1201'
