@@ -1,6 +1,6 @@
 # Bobby Share
 
-[![Minecraft Version](https://img.shields.io/badge/Minecraft-26.2-blue.svg)](https://link.modrinth.com)
+[![Minecraft Version](https://img.shields.io/badge/Minecraft-1.20.1%20--%2026.2-blue.svg)](https://link.modrinth.com)
 [![Platform](https://img.shields.io/badge/Platform-Fabric-red.svg)](https://fabricmc.net)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -17,8 +17,17 @@ Bobby is a client-side mod that allows you to have a render distance greater tha
 **Bobby Share** bridges this gap:
 1. When you join the server or move into new areas, your client checks if it is missing chunk data in its local Bobby cache.
 2. If the chunk is missing, the client sends a lightweight network request to the server.
-3. The server loads the chunk data asynchronously, optimizes it, and streams it back to you.
+3. The server loads the chunk data asynchronously (or serializes live active chunks directly from server RAM), optimizes it, and streams it back to you.
 4. Your client saves the chunk locally, allowing you to instantly see far beyond the server's render distance.
+
+---
+
+## 🔄 Real-Time Chunk Cache Invalidation (v1.2.0+)
+
+Never worry about outdated distant view distances again!
+* **Instant Sync:** Whenever a player breaks a block, places a block, or explodes terrain on the server, Bobby Share invalidates the modified chunk in real time.
+* **Zero Overhead:** Sends a tiny 8-byte notification packet to connected clients.
+* **Seamless Updates:** Clients bypass stale local disk cache for modified chunks and automatically stream the updated structures without requiring manual cache resets or re-joins!
 
 ---
 
@@ -26,7 +35,9 @@ Bobby is a client-side mod that allows you to have a render distance greater tha
 
 Designed to scale smoothly from 3 players to 100+ concurrent players without causing TPS drops or clogging network channels:
 
+* **Live Server RAM Streaming:** Actively loaded chunks near players are serialized directly from server RAM, ensuring you always see the latest world edits.
 * **Server-Side LRU Cache:** Caches up to 4096 optimized chunk compounds in memory (utilizing ~100MB of RAM) to serve popular regions instantly without repeating disk reads.
+* **Throttled Client Queue:** Throttles outgoing client requests to 3 chunks per tick (60 chunks/sec), completely eliminating ping spikes in caves or dense terrain.
 * **Token Bucket Rate Limiting:** Limits requests per player (Burst: 200 chunks, Refill: 80 chunks/second) to protect the server from being spammed by bots or speed-flying.
 * **NBT Stripping (Bandwidth Optimization):** Strips heavy, rendering-irrelevant data from chunks (structures, entity ticks, carving masks, block entities) before sending, reducing average compressed payload sizes by **50% to 80%**.
 * **Main-Thread Safety:** Fetches chunk data asynchronously using Minecraft's thread-safe loading APIs. On the client, file writing runs on background worker threads to keep the rendering engine completely lag-free.
@@ -52,33 +63,16 @@ You can configure Bobby Share's performance settings using the auto-generated co
 
 ## 📥 Installation
 
-Choose the Bobby Share jar matching the Minecraft and Bobby versions used by the client:
-
-| Minecraft | Bobby | Bobby Share | Java |
-| --- | --- | --- | --- |
-| 1.20.5–1.20.6 | 5.2.0–5.2.1 | `bobbyshare-1.2.0+mc1.20.5-1.20.6.jar` | 21 |
-| 1.21–1.21.1 | 5.2.4.x | `bobbyshare-1.2.0+mc1.21-1.21.1.jar` | 21 |
-| 1.21.2–1.21.3 | 5.2.5.x | `bobbyshare-1.2.0+mc1.21.2-1.21.3.jar` | 21 |
-| 1.21.4 | 5.2.6.x | `bobbyshare-1.2.0+mc1.21.4.jar` | 21 |
-| 1.21.5 | 5.2.7.x | `bobbyshare-1.2.0+mc1.21.5.jar` | 21 |
-| 1.21.6–1.21.8 | 5.2.8–5.2.9 | `bobbyshare-1.2.0+mc1.21.6-1.21.8.jar` | 21 |
-| 1.21.9–1.21.10 | 5.2.10.x | `bobbyshare-1.2.0+mc1.21.9-1.21.10.jar` | 21 |
-| 1.21.11 | 5.2.11.x | `bobbyshare-1.2.0+mc1.21.11.jar` | 21 |
-| 26.1–26.1.2 | 5.2.13.x | `bobbyshare-1.2.0+mc26.1-26.1.2.jar` | 25 |
-| 26.2 | 5.2.15.x | `bobbyshare-1.2.0+mc26.2.jar` | 25 |
-
-The ready-to-use jars are located in the `releases` directory. One jar is shared by
-multiple Minecraft versions only where the relevant Minecraft, Fabric networking,
-chunk serialization, and Bobby integration APIs remain compatible.
+Supported Minecraft Versions: **1.20.1 to 26.2** (all releases and snapshots covered across version-specific jars in [Releases](https://github.com/nikitagk22/bobby-share/releases)).
 
 ### Client-Side
 Place the following files in your client's `.minecraft/mods/` directory:
-1. `bobby-5.2.15+mc26.2.jar`
-2. `bobbyshare-1.2.0+mc26.2.jar`
+1. `bobby-*.jar` (compatible version for your Minecraft version)
+2. `bobbyshare-1.3.0+mc<version>.jar`
 
 ### Server-Side
 Place only the addon jar in your server's `mods/` directory:
-1. `bobbyshare-1.2.0+mc26.2.jar`
+1. `bobbyshare-1.3.0+mc<version>.jar`
 
 *(Note: The main Bobby mod is client-side only and should **not** be installed on the server).*
 
@@ -86,13 +80,11 @@ Place only the addon jar in your server's `mods/` directory:
 
 ## 🛠️ Building
 
-To build the mod from source, you need **Java 25** installed.
-
-Run the Gradle build command inside the project directory:
+To build the mod from source for any target Minecraft version:
 ```bash
 ./gradlew build
 ```
-The compiled jar will be located in `build/libs/bobbyshare-1.2.0+mc26.2.jar`.
+Compiled release jars will be located in the `releases/` directory.
 
 ---
 
