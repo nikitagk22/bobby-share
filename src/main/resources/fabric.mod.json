@@ -30,5 +30,6 @@
   },
   "recommends": {
     "bobby": "~5.2.15"
-  }
+  },
+  "icon": "assets/bobbyshare/icon.png"
 }
