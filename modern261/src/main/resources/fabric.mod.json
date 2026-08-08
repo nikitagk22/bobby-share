@@ -10,7 +10,7 @@
   "contact": {
     "homepage": "https://github.com/Johni0702/bobby"
   },
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "environment": "*",
   "entrypoints": {
     "main": [

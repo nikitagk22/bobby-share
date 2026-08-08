@@ -2,7 +2,7 @@
 
 [![Minecraft Version](https://img.shields.io/badge/Minecraft-1.20.1%20--%2026.2-blue.svg)](https://link.modrinth.com)
 [![Platform](https://img.shields.io/badge/Platform-Fabric-red.svg)](https://fabricmc.net)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 **Bobby Share** is a high-performance Fabric mod designed to collaboratively stream chunk data from the Minecraft server directly to clients to dynamically fill the rendering cache of the **[Bobby](https://github.com/Johni0702/bobby)** mod.
 
@@ -89,4 +89,4 @@ Compiled release jars will be located in the `releases/` directory.
 ---
 
 ## 📄 License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GNU General Public License v3 - see the [LICENSE](LICENSE) file for details.
