@@ -5,6 +5,7 @@ import net.ngk22.bobbyshare.network.ChunkRequestPayload;
 import net.ngk22.bobbyshare.network.ChunkResponsePayload;
 import de.johni0702.minecraft.bobby.ext.ClientChunkCacheExt;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.level.ChunkPos;
@@ -22,9 +23,25 @@ public class ClientChunkRequester {
 
     public static void invalidate(ChunkPos pos) {
         invalidatedChunks.add(pos);
-        // Do not let an already queued request repopulate the cache with stale data.
-        requestQueue.remove(pos);
         BobbyShare.LOGGER.debug("Marked Bobby chunk {} as stale", pos);
+
+        if (FabricLoader.getInstance().isModLoaded("bobby")) {
+            try {
+                Minecraft client = Minecraft.getInstance();
+                if (client.level != null && client.level.getChunkSource() instanceof ClientChunkCacheExt ext) {
+                    var fakeManager = ext.bobby_getFakeChunkManager();
+                    if (fakeManager != null && fakeManager.getChunk(pos.x(), pos.z()) != null) {
+                        fakeManager.unload(pos.x(), pos.z(), false);
+                    }
+                }
+            } catch (Throwable t) {
+                BobbyShare.LOGGER.warn("Failed to unload stale fake chunk: " + pos, t);
+            }
+        }
+
+        if (ClientPlayNetworking.canSend(ChunkRequestPayload.ID)) {
+            requestChunk(pos);
+        }
     }
 
     public static boolean isInvalidated(ChunkPos pos) {
@@ -111,6 +128,9 @@ public class ClientChunkRequester {
         // ALWAYS save the incoming NBT to Bobby's local disk cache if present, 
         // even if the response arrived late (after client-side timeout).
         payload.nbt().ifPresent(nbt -> {
+            if (!FabricLoader.getInstance().isModLoaded("bobby")) {
+                return;
+            }
             try {
                 Minecraft client = Minecraft.getInstance();
                 if (client.level != null) {

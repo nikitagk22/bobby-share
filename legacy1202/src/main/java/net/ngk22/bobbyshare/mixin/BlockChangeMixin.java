@@ -15,7 +15,7 @@ public abstract class BlockChangeMixin {
     @Inject(method = "setBlockState", at = @At("RETURN"))
     private void bobbyShare$onSetBlock(BlockPos pos, BlockState state, int flags, CallbackInfoReturnable<Boolean> cir) {
         if (cir.getReturnValueZ() && (Object) this instanceof ServerWorld world) {
-            BobbyShare.invalidateChunk(world, new net.minecraft.util.math.ChunkPos(pos));
+            BobbyShare.queueChunkInvalidation(world, pos.getX() >> 4, pos.getZ() >> 4);
         }
     }
 }
