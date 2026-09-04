@@ -9,14 +9,19 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import org.spongepowered.asm.mixin.Pseudo;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.ngk22.bobbyshare.network.ChunkRequestPayload;
+
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
+@Pseudo
 @Mixin(value = FakeChunkManager.class)
 public class FakeChunkManagerMixin {
     @Inject(method = "loadTag(Lnet/minecraft/world/level/ChunkPos;I)Ljava/util/concurrent/CompletableFuture;", at = @At("RETURN"), cancellable = true, remap = false)
     private void onLoadTag(ChunkPos pos, int index, CallbackInfoReturnable<CompletableFuture<Optional<CompoundTag>>> cir) {
-        if (index != 0) {
+        if (index != 0 || !ClientPlayNetworking.canSend(ChunkRequestPayload.ID)) {
             return;
         }
 

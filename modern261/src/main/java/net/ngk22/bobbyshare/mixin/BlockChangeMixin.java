@@ -17,7 +17,7 @@ public abstract class BlockChangeMixin {
     private void bobbyShare$onSetBlock(BlockPos pos, BlockState state, int flags,
                                        CallbackInfoReturnable<Boolean> cir) {
         if (cir.getReturnValueZ() && (Object) this instanceof ServerLevel world) {
-            BobbyShare.invalidateChunk(world, new net.minecraft.world.level.ChunkPos(pos.getX() >> 4, pos.getZ() >> 4));
+            BobbyShare.queueChunkInvalidation(world, pos.getX() >> 4, pos.getZ() >> 4);
         }
     }
 }

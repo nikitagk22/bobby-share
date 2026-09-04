@@ -2,6 +2,7 @@ package net.ngk22.bobbyshare.client;
 
 import de.johni0702.minecraft.bobby.ext.ClientChunkManagerExt;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.network.PacketByteBuf;
@@ -29,7 +30,26 @@ public final class ClientChunkRequester {
         TIMEOUTS.scheduleAtFixedRate(ClientChunkRequester::processQueue, 0, 50, TimeUnit.MILLISECONDS);
     }
 
-    public static void invalidate(ChunkPos pos) { INVALIDATED.add(pos); REQUEST_QUEUE.remove(pos); }
+    public static void invalidate(ChunkPos pos) {
+        INVALIDATED.add(pos);
+        if (FabricLoader.getInstance().isModLoaded("bobby")) {
+            try {
+                MinecraftClient client = MinecraftClient.getInstance();
+                if (client.world != null && client.world.getChunkManager() instanceof ClientChunkManagerExt ext) {
+                    var manager = ext.bobby_getFakeChunkManager();
+                    if (manager != null && manager.getChunk(pos.x, pos.z) != null) {
+                        manager.unload(pos.x, pos.z, false);
+                    }
+                }
+            } catch (Throwable t) {
+                BobbyShare.LOGGER.warn("Failed to unload stale fake chunk: " + pos, t);
+            }
+        }
+        if (ClientPlayNetworking.canSend(ChunkRequestPayload.ID)) {
+            requestChunk(pos);
+        }
+    }
+
     public static boolean isInvalidated(ChunkPos pos) { return INVALIDATED.contains(pos); }
 
     public static CompletableFuture<Optional<NbtCompound>> requestChunk(ChunkPos pos) {
@@ -73,6 +93,8 @@ public final class ClientChunkRequester {
         if (stale) { if (future != null) future.complete(Optional.empty()); return; }
         if (payload.nbt().isPresent()) INVALIDATED.remove(pos);
         if (future != null) future.complete(payload.nbt());
+
+        if (!FabricLoader.getInstance().isModLoaded("bobby")) return;
         payload.nbt().ifPresent(nbt -> {
             try {
                 MinecraftClient client = MinecraftClient.getInstance();

@@ -9,10 +9,13 @@ import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerChunkCache;
@@ -28,8 +31,11 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static net.minecraft.commands.Commands.literal;
 
@@ -38,7 +44,16 @@ public class BobbyShare implements ModInitializer {
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
     private static final Map<UUID, TokenBucket> rateLimiters = new ConcurrentHashMap<>();
-    
+    private static final Map<ResourceKey<Level>, Set<ChunkPos>> pendingInvalidations = new ConcurrentHashMap<>();
+
+    // Server-side statistics counters
+    public static final AtomicLong statsTotalRequests = new AtomicLong();
+    public static final AtomicLong statsRamHits = new AtomicLong();
+    public static final AtomicLong statsLiveHits = new AtomicLong();
+    public static final AtomicLong statsDiskReads = new AtomicLong();
+    public static final AtomicLong statsRateLimited = new AtomicLong();
+    public static final AtomicLong statsInvalidationsSent = new AtomicLong();
+
     // Thread-safe LRU Cache that adjusts its capacity limit dynamically based on config value
     private static final Map<ChunkKey, Optional<CompoundTag>> chunkCache = Collections.synchronizedMap(
         new LinkedHashMap<ChunkKey, Optional<CompoundTag>>(4096, 0.75f, true) {
@@ -66,7 +81,10 @@ public class BobbyShare implements ModInitializer {
             rateLimiters.remove(handler.player.getUUID());
         });
 
-        // Register OP command (/bobbyshare reload & clearcache)
+        // Register tick event to batch process chunk invalidations at the end of each tick
+        ServerTickEvents.END_SERVER_TICK.register(BobbyShare::processPendingInvalidations);
+
+        // Register OP commands (/bobbyshare reload, clearcache, stats)
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
             dispatcher.register(literal("bobbyshare")
                 .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
@@ -74,7 +92,7 @@ public class BobbyShare implements ModInitializer {
                     .executes(context -> {
                         BobbyShareConfigManager.load();
                         synchronized (chunkCache) {
-                            chunkCache.clear(); // Clear cache to apply new capacity limits cleanly
+                            chunkCache.clear();
                         }
                         context.getSource().sendSuccess(() -> Component.literal("§a[BobbyShare] Configuration reloaded and cache cleared!"), true);
                         return 1;
@@ -82,10 +100,43 @@ public class BobbyShare implements ModInitializer {
                 )
                 .then(literal("clearcache")
                     .executes(context -> {
+                        int size;
                         synchronized (chunkCache) {
+                            size = chunkCache.size();
                             chunkCache.clear();
                         }
-                        context.getSource().sendSuccess(() -> Component.literal("§a[BobbyShare] Server-side chunk cache cleared!"), true);
+                        context.getSource().sendSuccess(() -> Component.literal("§a[BobbyShare] Cleared " + size + " chunks from server RAM cache!"), true);
+                        return 1;
+                    })
+                )
+                .then(literal("stats")
+                    .executes(context -> {
+                        int cacheSize;
+                        synchronized (chunkCache) {
+                            cacheSize = chunkCache.size();
+                        }
+                        int capacity = BobbyShareConfigManager.getConfig().cacheCapacity;
+                        long total = statsTotalRequests.get();
+                        long ram = statsRamHits.get();
+                        long live = statsLiveHits.get();
+                        long disk = statsDiskReads.get();
+                        long limited = statsRateLimited.get();
+                        long invalidations = statsInvalidationsSent.get();
+                        double hitRate = total > 0 ? (ram * 100.0 / total) : 0.0;
+
+                        context.getSource().sendSuccess(() -> Component.literal(
+                            String.format(
+                                "§6=== [BobbyShare Server Stats] ===\n" +
+                                "§eRAM Cache: §a%d / %d chunks\n" +
+                                "§eTotal Requests: §f%d\n" +
+                                "§e  - RAM Hits: §a%d (%.1f%%)\n" +
+                                "§e  - Live Memory: §b%d\n" +
+                                "§e  - Disk Reads: §e%d\n" +
+                                "§eRate Limited: §c%d\n" +
+                                "§eInvalidations Broadcasted: §d%d",
+                                cacheSize, capacity, total, ram, hitRate, live, disk, limited, invalidations
+                            )
+                        ), false);
                         return 1;
                     })
                 )
@@ -96,6 +147,7 @@ public class BobbyShare implements ModInitializer {
         ServerPlayNetworking.registerGlobalReceiver(ChunkRequestPayload.ID, (payload, context) -> {
             ServerPlayer player = context.player();
             ChunkPos pos = new ChunkPos(payload.x(), payload.z());
+            statsTotalRequests.incrementAndGet();
             
             // Execute on the server main thread to ensure thread safety
             context.server().execute(() -> {
@@ -112,6 +164,7 @@ public class BobbyShare implements ModInitializer {
                 // 2. Rate Limiting Check
                 TokenBucket bucket = rateLimiters.computeIfAbsent(player.getUUID(), uuid -> new TokenBucket());
                 if (!bucket.tryConsume()) {
+                    statsRateLimited.incrementAndGet();
                     LOGGER.debug("Player {} rate-limited for chunk request {}", player.getName().getString(), pos);
                     return;
                 }
@@ -125,42 +178,48 @@ public class BobbyShare implements ModInitializer {
                     return;
                 }
 
-                // 4. Server LRU Cache Check
+                // 4. Server LRU Cache Check (including negative cache hits)
                 Optional<CompoundTag> cached = chunkCache.get(cacheKey);
                 if (cached != null) {
+                    statsRamHits.incrementAndGet();
                     LOGGER.debug("Served chunk {} to player {} from memory cache", pos, player.getName().getString());
                     ServerPlayNetworking.send(player, new ChunkResponsePayload(pos.x(), pos.z(), cached));
                     return;
                 }
 
-                // 5. Memory Check: If the chunk is currently active in the server memory, serialize it directly
+                // 5. Memory Check: If the chunk is currently active in the server memory, serialize asynchronously
                 ServerChunkCache chunkManager = world.getChunkSource();
                 ChunkAccess chunk = chunkManager.getChunk(pos.x(), pos.z(), ChunkStatus.FULL, false);
                 if (chunk != null) {
-                    try {
-                        CompoundTag nbt = SerializableChunkData.copyOf(world, chunk).write();
-                        Optional<CompoundTag> optimized = Optional.of(optimizeChunkNbt(nbt));
+                    statsLiveHits.incrementAndGet();
+                    SerializableChunkData data = SerializableChunkData.copyOf(world, chunk);
+                    CompletableFuture.supplyAsync(() -> {
+                        try {
+                            CompoundTag nbt = data.write();
+                            return Optional.of(optimizeChunkNbt(nbt));
+                        } catch (Exception e) {
+                            LOGGER.error("Failed to serialize live chunk NBT for " + pos, e);
+                            return Optional.<CompoundTag>empty();
+                        }
+                    }).thenAccept(optimized -> {
                         if (optimized.isPresent()) {
                             chunkCache.put(cacheKey, optimized);
                         }
-                        LOGGER.debug("Served chunk {} to player {} from live server memory", pos, player.getName().getString());
-                        ServerPlayNetworking.send(player, new ChunkResponsePayload(pos.x(), pos.z(), optimized));
-                        return;
-                    } catch (Exception e) {
-                        LOGGER.error("Failed to serialize live chunk NBT for " + pos, e);
-                    }
+                        if (player.level() == world && !player.hasDisconnected()) {
+                            ServerPlayNetworking.send(player, new ChunkResponsePayload(pos.x(), pos.z(), optimized));
+                        }
+                    });
+                    return;
                 }
 
                 // 6. Cache Miss & Unloaded: Fetch chunk NBT asynchronously from storage
+                statsDiskReads.incrementAndGet();
                 LOGGER.debug("Requesting chunk {} for player {} from disk asynchronously", pos, player.getName().getString());
                 chunkManager.chunkMap.read(pos).thenAccept(opt -> {
-                    // Optimize chunk NBT (strip unnecessary tags like structures, ticks, block entities)
                     Optional<CompoundTag> optimized = opt.map(BobbyShare::optimizeChunkNbt);
                     
-                    // Put in the cache only if the chunk exists/is generated on disk
-                    if (optimized.isPresent()) {
-                        chunkCache.put(cacheKey, optimized);
-                    }
+                    // Put in the cache even if empty (negative caching) to avoid disk thrashing
+                    chunkCache.put(cacheKey, optimized);
 
                     // Send the chunk NBT back to the player
                     if (player.level() == world && !player.hasDisconnected()) {
@@ -178,27 +237,50 @@ public class BobbyShare implements ModInitializer {
     }
 
     /**
-     * Invalidates both the in-memory response cache and clients in this dimension.
-     * Called after a successful server-side block change.
+     * Queues an invalidation for a modified chunk. Processed in batch at the end of the server tick.
      */
-    public static void invalidateChunk(ServerLevel world, ChunkPos pos) {
-        ChunkKey key = new ChunkKey(world.dimension(), pos);
-        synchronized (chunkCache) {
-            chunkCache.remove(key);
-        }
-
-        ChunkInvalidationPayload payload = new ChunkInvalidationPayload(pos.x(), pos.z());
-        for (ServerPlayer player : world.players()) {
-            if (!player.hasDisconnected() && ServerPlayNetworking.canSend(player, ChunkInvalidationPayload.ID)) {
-                ServerPlayNetworking.send(player, payload);
-            }
-        }
-        LOGGER.debug("Invalidated cached chunk {} in {}", pos, world.dimension().identifier());
+    public static void queueChunkInvalidation(ServerLevel world, int chunkX, int chunkZ) {
+        pendingInvalidations
+            .computeIfAbsent(world.dimension(), k -> ConcurrentHashMap.newKeySet())
+            .add(new ChunkPos(chunkX, chunkZ));
     }
 
     /**
-     * Strips structure, tick lists, carving masks, block entities, and post-processing info
-     * from the chunk NBT. This saves substantial network bandwidth and server-side cache memory.
+     * Batch processes all pending invalidations accumulated during this tick.
+     */
+    private static void processPendingInvalidations(MinecraftServer server) {
+        if (pendingInvalidations.isEmpty()) return;
+
+        double maxDist = BobbyShareConfigManager.getConfig().maxRequestDistance;
+        double maxDistSq = maxDist * maxDist;
+
+        for (ServerLevel world : server.getAllLevels()) {
+            Set<ChunkPos> dirty = pendingInvalidations.remove(world.dimension());
+            if (dirty == null || dirty.isEmpty()) continue;
+
+            for (ChunkPos pos : dirty) {
+                ChunkKey key = new ChunkKey(world.dimension(), pos);
+                chunkCache.remove(key);
+
+                ChunkInvalidationPayload payload = new ChunkInvalidationPayload(pos.x(), pos.z());
+                for (ServerPlayer player : world.players()) {
+                    if (!player.hasDisconnected() && ServerPlayNetworking.canSend(player, ChunkInvalidationPayload.ID)) {
+                        double dx = player.chunkPosition().x() - pos.x();
+                        double dz = player.chunkPosition().z() - pos.z();
+                        if (dx * dx + dz * dz <= maxDistSq) {
+                            ServerPlayNetworking.send(player, payload);
+                            statsInvalidationsSent.incrementAndGet();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Strips heavy, non-visual tags from the chunk NBT.
+     * Retains block entities (chests, signs, banners, bells, beds) while stripping
+     * item inventories and loot tables.
      */
     private static CompoundTag optimizeChunkNbt(CompoundTag original) {
         if (original == null) return null;
@@ -206,8 +288,18 @@ public class BobbyShare implements ModInitializer {
         optimizedRemove(original, "block_ticks");
         optimizedRemove(original, "fluid_ticks");
         optimizedRemove(original, "PostProcessing");
-        optimizedRemove(original, "block_entities");
         optimizedRemove(original, "CarvingMasks");
+
+        // Keep block entities for visual rendering, but strip items to protect privacy and save bandwidth
+        original.getList("block_entities").ifPresent(list -> {
+            list.compoundStream().forEach(be -> {
+                be.remove("Items");
+                be.remove("Inventory");
+                be.remove("LootTable");
+                be.remove("LootTableSeed");
+            });
+        });
+
         return original;
     }
 

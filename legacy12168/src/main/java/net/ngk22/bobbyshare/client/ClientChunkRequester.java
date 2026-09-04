@@ -2,6 +2,7 @@ package net.ngk22.bobbyshare.client;
 
 import de.johni0702.minecraft.bobby.ext.ClientChunkManagerExt;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.util.math.ChunkPos;
@@ -24,9 +25,30 @@ public final class ClientChunkRequester {
         Thread t = new Thread(r, "BobbyShare-TimeoutScheduler"); t.setDaemon(true); return t;
     });
 
-    static { TIMEOUTS.scheduleAtFixedRate(ClientChunkRequester::processQueue, 0, 50, TimeUnit.MILLISECONDS); }
+    static {
+        TIMEOUTS.scheduleAtFixedRate(ClientChunkRequester::processQueue, 0, 50, TimeUnit.MILLISECONDS);
+    }
 
-    public static void invalidate(ChunkPos pos) { INVALIDATED.add(pos); REQUEST_QUEUE.remove(pos); }
+    public static void invalidate(ChunkPos pos) {
+        INVALIDATED.add(pos);
+        if (FabricLoader.getInstance().isModLoaded("bobby")) {
+            try {
+                MinecraftClient client = MinecraftClient.getInstance();
+                if (client.world != null && client.world.getChunkManager() instanceof ClientChunkManagerExt ext) {
+                    var manager = ext.bobby_getFakeChunkManager();
+                    if (manager != null && manager.getChunk(pos.x, pos.z) != null) {
+                        manager.unload(pos.x, pos.z, false);
+                    }
+                }
+            } catch (Throwable t) {
+                BobbyShare.LOGGER.warn("Failed to unload stale fake chunk: " + pos, t);
+            }
+        }
+        if (ClientPlayNetworking.canSend(ChunkRequestPayload.ID)) {
+            requestChunk(pos);
+        }
+    }
+
     public static boolean isInvalidated(ChunkPos pos) { return INVALIDATED.contains(pos); }
 
     public static CompletableFuture<Optional<NbtCompound>> requestChunk(ChunkPos pos) {
@@ -40,15 +62,25 @@ public final class ClientChunkRequester {
 
     private static void processQueue() {
         try {
-            if (!ClientPlayNetworking.canSend(ChunkRequestPayload.ID)) { REQUEST_QUEUE.clear(); clearPendingRequests(); return; }
+            if (!ClientPlayNetworking.canSend(ChunkRequestPayload.ID)) {
+                REQUEST_QUEUE.clear();
+                clearPendingRequests();
+                return;
+            }
             for (int sent = 0; sent < 3; sent++) {
-                ChunkPos pos = REQUEST_QUEUE.poll(); if (pos == null) break;
+                ChunkPos pos = REQUEST_QUEUE.poll();
+                if (pos == null) break;
                 CompletableFuture<Optional<NbtCompound>> future = PENDING.get(pos);
                 if (future == null || future.isDone()) continue;
                 ClientPlayNetworking.send(new ChunkRequestPayload(pos.x, pos.z));
-                TIMEOUTS.schedule(() -> { CompletableFuture<Optional<NbtCompound>> pending = PENDING.remove(pos); if (pending != null && !pending.isDone()) pending.complete(Optional.empty()); }, 5, TimeUnit.SECONDS);
+                TIMEOUTS.schedule(() -> {
+                    CompletableFuture<Optional<NbtCompound>> pending = PENDING.remove(pos);
+                    if (pending != null && !pending.isDone()) pending.complete(Optional.empty());
+                }, 5, TimeUnit.SECONDS);
             }
-        } catch (Exception e) { BobbyShare.LOGGER.error("Error processing Bobby Share request queue", e); }
+        } catch (Exception e) {
+            BobbyShare.LOGGER.error("Error processing Bobby Share request queue", e);
+        }
     }
 
     public static void handleResponse(ChunkResponsePayload payload) {
@@ -58,6 +90,8 @@ public final class ClientChunkRequester {
         if (stale) { if (future != null) future.complete(Optional.empty()); return; }
         if (payload.nbt().isPresent()) INVALIDATED.remove(pos);
         if (future != null) future.complete(payload.nbt());
+
+        if (!FabricLoader.getInstance().isModLoaded("bobby")) return;
         payload.nbt().ifPresent(nbt -> {
             try {
                 MinecraftClient client = MinecraftClient.getInstance();
