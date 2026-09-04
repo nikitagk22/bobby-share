@@ -19,10 +19,12 @@ import java.util.concurrent.CompletableFuture;
 @Mixin(FakeChunkManager.class)
 public class FakeChunkManagerMixin {
     @Inject(method = "loadTag(Lnet/minecraft/util/math/ChunkPos;I)Ljava/util/concurrent/CompletableFuture;", at = @At("RETURN"), cancellable = true)
-    private void bobbyShare$load(ChunkPos pos, int index, CallbackInfoReturnable<CompletableFuture<Optional<NbtCompound>>> cir) {
+    private void bobbyShare$load(ChunkPos pos, int index,
+        CallbackInfoReturnable<CompletableFuture<Optional<NbtCompound>>> cir) {
         if (index != 0 || !ClientPlayNetworking.canSend(ChunkRequestPayload.ID)) return;
-        cir.setReturnValue(cir.getReturnValue().thenCompose(local -> local.isPresent() && !ClientChunkRequester.isInvalidated(pos)
-            ? CompletableFuture.completedFuture(local)
-            : ClientChunkRequester.requestChunk(pos)));
+        cir.setReturnValue(cir.getReturnValue().thenCompose(local ->
+            local.isPresent() && !ClientChunkRequester.isInvalidated(pos)
+                ? CompletableFuture.completedFuture(local)
+                : ClientChunkRequester.requestChunk(pos)));
     }
 }
