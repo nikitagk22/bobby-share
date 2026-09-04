@@ -20,24 +20,21 @@ public class ClientChunkRequester {
     private static final Map<ChunkPos, CompletableFuture<Optional<CompoundTag>>> pendingRequests = new ConcurrentHashMap<>();
     private static final Queue<ChunkPos> requestQueue = new ConcurrentLinkedQueue<>();
     private static final Set<ChunkPos> invalidatedChunks = ConcurrentHashMap.newKeySet();
+    private static final Map<ChunkPos, Integer> staleDiscards = new ConcurrentHashMap<>();
 
     public static void invalidate(ChunkPos pos) {
         invalidatedChunks.add(pos);
         BobbyShare.LOGGER.debug("Marked Bobby chunk {} as stale", pos);
 
-        if (FabricLoader.getInstance().isModLoaded("bobby")) {
-            try {
-                Minecraft client = Minecraft.getInstance();
-                if (client.level != null && client.level.getChunkSource() instanceof ClientChunkCacheExt ext) {
-                    var fakeManager = ext.bobby_getFakeChunkManager();
-                    if (fakeManager != null && fakeManager.getChunk(pos.x(), pos.z()) != null) {
-                        fakeManager.unload(pos.x(), pos.z(), false);
-                    }
-                }
-            } catch (Throwable t) {
-                BobbyShare.LOGGER.warn("Failed to unload stale fake chunk: " + pos, t);
+        // If a request for this chunk was already in flight, mark it to discard its stale response
+        if (pendingRequests.containsKey(pos)) {
+            staleDiscards.compute(pos, (k, v) -> v == null ? 1 : v + 1);
+            CompletableFuture<Optional<CompoundTag>> oldFuture = pendingRequests.remove(pos);
+            if (oldFuture != null && !oldFuture.isDone()) {
+                oldFuture.complete(Optional.empty());
             }
         }
+        requestQueue.remove(pos);
 
         if (ClientPlayNetworking.canSend(ChunkRequestPayload.ID)) {
             requestChunk(pos);
@@ -55,7 +52,6 @@ public class ClientChunkRequester {
     });
 
     static {
-        // Run queue processor every 50ms (1 tick) to throttle network requests and prevent ping spikes
         TIMEOUT_SCHEDULER.scheduleAtFixedRate(ClientChunkRequester::processQueue, 0, 50, TimeUnit.MILLISECONDS);
     }
 
@@ -65,9 +61,7 @@ public class ClientChunkRequester {
         if (existing != null) {
             return existing;
         }
-        invalidatedChunks.remove(pos);
 
-        // Add to queue to be processed at a throttled rate
         requestQueue.add(pos);
         return future;
     }
@@ -83,7 +77,7 @@ public class ClientChunkRequester {
             }
 
             int sentThisTick = 0;
-            int maxPerTick = 3; // 3 chunks per 50ms = 60 chunks per second (stays safely under the server 80/sec limit)
+            int maxPerTick = 3;
 
             while (sentThisTick < maxPerTick) {
                 ChunkPos pos = requestQueue.poll();
@@ -96,7 +90,6 @@ public class ClientChunkRequester {
                     ClientPlayNetworking.send(new ChunkRequestPayload(pos.x(), pos.z()));
                     sentThisTick++;
 
-                    // Schedule a 5-second timeout check
                     TIMEOUT_SCHEDULER.schedule(() -> {
                         CompletableFuture<Optional<CompoundTag>> pending = pendingRequests.remove(pos);
                         if (pending != null && !pending.isDone()) {
@@ -113,59 +106,66 @@ public class ClientChunkRequester {
 
     public static void handleResponse(ChunkResponsePayload payload) {
         ChunkPos pos = new ChunkPos(payload.x(), payload.z());
-        // Complete the future if it is still registered in the pending queue
-        boolean stale = invalidatedChunks.contains(pos);
-        CompletableFuture<Optional<CompoundTag>> future = pendingRequests.remove(pos);
-        if (stale) {
-            if (future != null) future.complete(Optional.empty());
+
+        Integer discards = staleDiscards.get(pos);
+        if (discards != null && discards > 0) {
+            if (discards == 1) {
+                staleDiscards.remove(pos);
+            } else {
+                staleDiscards.put(pos, discards - 1);
+            }
+            BobbyShare.LOGGER.debug("Discarded stale in-flight response for chunk {}", pos);
             return;
         }
-        if (payload.nbt().isPresent()) invalidatedChunks.remove(pos);
+
+        invalidatedChunks.remove(pos);
+        CompletableFuture<Optional<CompoundTag>> future = pendingRequests.remove(pos);
         if (future != null) {
             future.complete(payload.nbt());
         }
 
-        // ALWAYS save the incoming NBT to Bobby's local disk cache if present, 
-        // even if the response arrived late (after client-side timeout).
-        payload.nbt().ifPresent(nbt -> {
-            if (!FabricLoader.getInstance().isModLoaded("bobby")) {
-                return;
-            }
+        if (!FabricLoader.getInstance().isModLoaded("bobby")) {
+            return;
+        }
+        payload.nbt().ifPresentOrElse(nbt -> {
             try {
                 Minecraft client = Minecraft.getInstance();
-                if (client.level != null) {
-                    var chunkManager = client.level.getChunkSource();
-                    if (chunkManager instanceof ClientChunkCacheExt ext) {
-                        var fakeChunkManager = ext.bobby_getFakeChunkManager();
-                        if (fakeChunkManager != null) {
-                            var storage = fakeChunkManager.getStorage();
-                            if (storage != null) {
-                                // Save asynchronously to avoid blocking the main client/render thread
-                                CompletableFuture.runAsync(() -> {
-                                    try {
-                                        storage.save(pos, nbt);
-                                        BobbyShare.LOGGER.debug("Saved chunk {} from server to local Bobby cache", pos);
-                                    } catch (Exception e) {
-                                        BobbyShare.LOGGER.error("Failed to save chunk " + pos + " to Bobby cache asynchronously", e);
-                                    }
+                if (client.level != null && client.level.getChunkSource() instanceof ClientChunkCacheExt ext) {
+                    var fakeManager = ext.bobby_getFakeChunkManager();
+                    if (fakeManager != null && fakeManager.getStorage() != null) {
+                        CompletableFuture.runAsync(() -> {
+                            try {
+                                fakeManager.getStorage().save(pos, nbt);
+                                client.execute(() -> {
+                                    fakeManager.unload(pos.x(), pos.z(), false);
+                                    fakeManager.loadMissingChunksFromCache();
                                 });
+                            } catch (Exception e) {
+                                BobbyShare.LOGGER.error("Failed to save chunk " + pos + " to Bobby cache", e);
                             }
-                        }
+                        });
                     }
                 }
             } catch (Exception e) {
-                BobbyShare.LOGGER.error("Failed to retrieve Bobby storage on main thread", e);
+                BobbyShare.LOGGER.error("Failed to update Bobby cache for " + pos, e);
             }
+        }, () -> {
+            try {
+                Minecraft client = Minecraft.getInstance();
+                if (client.level != null && client.level.getChunkSource() instanceof ClientChunkCacheExt ext) {
+                    var fakeManager = ext.bobby_getFakeChunkManager();
+                    if (fakeManager != null) {
+                        client.execute(() -> fakeManager.unload(pos.x(), pos.z(), false));
+                    }
+                }
+            } catch (Exception ignored) {}
         });
     }
 
-    /**
-     * Clears all pending requests, empties the queue, and completes futures with empty values.
-     * Called on server disconnect to prevent memory leaks and dangling timeouts.
-     */
     public static void clearPendingRequests() {
         requestQueue.clear();
         invalidatedChunks.clear();
+        staleDiscards.clear();
         pendingRequests.values().forEach(future -> {
             if (!future.isDone()) {
                 future.complete(Optional.empty());

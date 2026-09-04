@@ -174,9 +174,10 @@ public class BobbyShare implements ModInitializer {
         Chunk liveChunk = manager.getChunk(pos.x, pos.z, ChunkStatus.FULL, false);
         if (liveChunk != null) {
             STATS_LIVE_HITS.incrementAndGet();
+            SerializedChunk serializedChunk = SerializedChunk.fromChunk(world, liveChunk);
             CompletableFuture.supplyAsync(() -> {
                 try {
-                    return Optional.of(optimize(SerializedChunk.fromChunk(world, liveChunk).serialize()));
+                    return Optional.of(optimize(serializedChunk.serialize()));
                 } catch (Exception error) {
                     LOGGER.error("Failed to serialize live chunk " + pos, error);
                     return Optional.<NbtCompound>empty();

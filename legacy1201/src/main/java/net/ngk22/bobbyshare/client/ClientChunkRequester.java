@@ -22,6 +22,7 @@ public final class ClientChunkRequester {
     private static final Map<ChunkPos, CompletableFuture<Optional<NbtCompound>>> PENDING = new ConcurrentHashMap<>();
     private static final Queue<ChunkPos> REQUEST_QUEUE = new ConcurrentLinkedQueue<>();
     private static final Set<ChunkPos> INVALIDATED = ConcurrentHashMap.newKeySet();
+    private static final Map<ChunkPos, Integer> STALE_DISCARDS = new ConcurrentHashMap<>();
     private static final ScheduledExecutorService TIMEOUTS = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "BobbyShare-TimeoutScheduler"); t.setDaemon(true); return t;
     });
@@ -32,19 +33,15 @@ public final class ClientChunkRequester {
 
     public static void invalidate(ChunkPos pos) {
         INVALIDATED.add(pos);
-        if (FabricLoader.getInstance().isModLoaded("bobby")) {
-            try {
-                MinecraftClient client = MinecraftClient.getInstance();
-                if (client.world != null && client.world.getChunkManager() instanceof ClientChunkManagerExt ext) {
-                    var manager = ext.bobby_getFakeChunkManager();
-                    if (manager != null && manager.getChunk(pos.x, pos.z) != null) {
-                        manager.unload(pos.x, pos.z, false);
-                    }
-                }
-            } catch (Throwable t) {
-                BobbyShare.LOGGER.warn("Failed to unload stale fake chunk: " + pos, t);
+        if (PENDING.containsKey(pos)) {
+            STALE_DISCARDS.compute(pos, (k, v) -> v == null ? 1 : v + 1);
+            CompletableFuture<Optional<NbtCompound>> old = PENDING.remove(pos);
+            if (old != null && !old.isDone()) {
+                old.complete(Optional.empty());
             }
         }
+        REQUEST_QUEUE.remove(pos);
+
         if (ClientPlayNetworking.canSend(ChunkRequestPayload.ID)) {
             requestChunk(pos);
         }
@@ -56,7 +53,6 @@ public final class ClientChunkRequester {
         CompletableFuture<Optional<NbtCompound>> future = new CompletableFuture<>();
         CompletableFuture<Optional<NbtCompound>> existing = PENDING.putIfAbsent(pos, future);
         if (existing != null) return existing;
-        INVALIDATED.remove(pos);
         REQUEST_QUEUE.add(pos);
         return future;
     }
@@ -88,29 +84,60 @@ public final class ClientChunkRequester {
 
     public static void handleResponse(ChunkResponsePayload payload) {
         ChunkPos pos = new ChunkPos(payload.x(), payload.z());
-        boolean stale = INVALIDATED.contains(pos);
+
+        Integer discards = STALE_DISCARDS.get(pos);
+        if (discards != null && discards > 0) {
+            if (discards == 1) {
+                STALE_DISCARDS.remove(pos);
+            } else {
+                STALE_DISCARDS.put(pos, discards - 1);
+            }
+            BobbyShare.LOGGER.debug("Discarded stale in-flight response for chunk {}", pos);
+            return;
+        }
+
+        INVALIDATED.remove(pos);
         CompletableFuture<Optional<NbtCompound>> future = PENDING.remove(pos);
-        if (stale) { if (future != null) future.complete(Optional.empty()); return; }
-        if (payload.nbt().isPresent()) INVALIDATED.remove(pos);
         if (future != null) future.complete(payload.nbt());
 
         if (!FabricLoader.getInstance().isModLoaded("bobby")) return;
-        payload.nbt().ifPresent(nbt -> {
+        payload.nbt().ifPresentOrElse(nbt -> {
             try {
                 MinecraftClient client = MinecraftClient.getInstance();
                 if (client.world != null && client.world.getChunkManager() instanceof ClientChunkManagerExt ext) {
                     var manager = ext.bobby_getFakeChunkManager();
                     if (manager != null && manager.getStorage() != null) {
-                        CompletableFuture.runAsync(() -> manager.getStorage().save(pos, nbt));
+                        CompletableFuture.runAsync(() -> {
+                            try {
+                                manager.getStorage().save(pos, nbt);
+                                client.execute(() -> {
+                                    manager.unload(pos.x, pos.z, false);
+                                    manager.loadMissingChunksFromCache();
+                                });
+                            } catch (Exception e) {
+                                BobbyShare.LOGGER.error("Failed to save chunk " + pos + " to Bobby cache", e);
+                            }
+                        });
                     }
                 }
-            } catch (Exception e) { BobbyShare.LOGGER.error("Failed to save chunk " + pos, e); }
+            } catch (Exception e) { BobbyShare.LOGGER.error("Failed to update Bobby cache for " + pos, e); }
+        }, () -> {
+            try {
+                MinecraftClient client = MinecraftClient.getInstance();
+                if (client.world != null && client.world.getChunkManager() instanceof ClientChunkManagerExt ext) {
+                    var manager = ext.bobby_getFakeChunkManager();
+                    if (manager != null) {
+                        client.execute(() -> manager.unload(pos.x, pos.z, false));
+                    }
+                }
+            } catch (Exception ignored) {}
         });
     }
 
     public static void clearPendingRequests() {
         REQUEST_QUEUE.clear();
         INVALIDATED.clear();
+        STALE_DISCARDS.clear();
         PENDING.values().forEach(f -> f.complete(Optional.empty()));
         PENDING.clear();
     }
