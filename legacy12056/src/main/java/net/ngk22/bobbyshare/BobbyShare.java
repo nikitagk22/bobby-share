@@ -174,17 +174,14 @@ public class BobbyShare implements ModInitializer {
         Chunk liveChunk = manager.getChunk(pos.x, pos.z, ChunkStatus.FULL, false);
         if (liveChunk != null) {
             STATS_LIVE_HITS.incrementAndGet();
-            CompletableFuture.supplyAsync(() -> {
-                try {
-                    return Optional.of(optimize(ChunkSerializer.serialize(world, liveChunk)));
-                } catch (Exception error) {
-                    LOGGER.error("Failed to serialize live chunk " + pos, error);
-                    return Optional.<NbtCompound>empty();
-                }
-            }).thenAccept(result -> {
-                if (result.isPresent()) CACHE.put(cacheKey, result);
+            try {
+                Optional<NbtCompound> result = Optional.of(optimize(ChunkSerializer.serialize(world, liveChunk)));
+                CACHE.put(cacheKey, result);
                 if (player.getServerWorld() == world && !player.isDisconnected()) send(player, pos, result);
-            });
+            } catch (Exception error) {
+                LOGGER.error("Failed to serialize live chunk " + pos, error);
+                if (player.getServerWorld() == world && !player.isDisconnected()) send(player, pos, Optional.empty());
+            }
             return;
         }
         STATS_DISK_READS.incrementAndGet();

@@ -98,7 +98,10 @@ public final class ClientChunkRequester {
 
         INVALIDATED.remove(pos);
         CompletableFuture<Optional<NbtCompound>> future = PENDING.remove(pos);
-        if (future != null) future.complete(payload.nbt());
+        if (future != null) {
+            future.complete(payload.nbt());
+            return;
+        }
 
         if (!FabricLoader.getInstance().isModLoaded("bobby")) return;
         payload.nbt().ifPresentOrElse(nbt -> {
@@ -110,12 +113,15 @@ public final class ClientChunkRequester {
                         CompletableFuture.runAsync(() -> {
                             try {
                                 manager.getStorage().save(pos, nbt);
-                                client.execute(() -> {
-                                    manager.unload(pos.x, pos.z, false);
-                                    manager.loadMissingChunksFromCache();
-                                });
+                                if (manager.getChunk(pos.x, pos.z) != null) {
+                                    var deserialized = de.johni0702.minecraft.bobby.ChunkSerializer.deserialize(pos, nbt, client.world);
+                                    if (deserialized != null) {
+                                        var newChunk = deserialized.get();
+                                        client.execute(() -> manager.load(pos.x, pos.z, newChunk));
+                                    }
+                                }
                             } catch (Exception e) {
-                                BobbyShare.LOGGER.error("Failed to save chunk " + pos + " to Bobby cache", e);
+                                BobbyShare.LOGGER.error("Failed to update Bobby chunk " + pos, e);
                             }
                         });
                     }
