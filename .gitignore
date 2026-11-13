@@ -18,3 +18,6 @@ logs.txt
 bobby_share_icon.jpg
 .DS_Store
 **/.DS_Store
+
+# local deploy script with credentials
+deploy.py
